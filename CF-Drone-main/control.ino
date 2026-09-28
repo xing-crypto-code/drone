@@ -1,0 +1,340 @@
+// 飞行控制
+
+#include "vector.h"
+#include "quaternion.h"
+#include "pid.h"
+#include "lpf.h"
+#include "util.h"
+
+#if WEB_RC_ENABLED
+#include "control.h"
+#endif
+
+// 参数适配118mm轴距的微型四轴飞行器
+// ============== 角速率环（内环）参数 ==============
+#define PITCHRATE_P 0.06 // 增大P值提高响应速度
+#define PITCHRATE_I 0.1 // 中等I值补偿电机差异
+#define PITCHRATE_D 0.001 // 小D值抑制震荡
+#define PITCHRATE_I_LIM 0.3 // 限制积分积累
+#define ROLLRATE_P PITCHRATE_P // 横滚和俯仰使用相同参数
+#define ROLLRATE_I PITCHRATE_I 
+#define ROLLRATE_D PITCHRATE_D
+#define ROLLRATE_I_LIM PITCHRATE_I_LIM
+#define YAWRATE_P 0.3 // 偏航需要更高的P值（惯性较小）
+#define YAWRATE_I 0.01 // 中等I值补偿
+#define YAWRATE_D 0.01 // 小D值
+#define YAWRATE_I_LIM 0.3
+// ============== 角度环（外环）参数 ==============
+#define ROLL_P 6 // 较高的P值快速响应
+#define ROLL_I 0 // 外环 I 项
+#define ROLL_D 0 // 角度环通常不需要D项
+#define ROLL_I_LIM radians(5.0f) // 外环横滚积分限幅（rad/s），约 5°/s，防止低油门/切模式时积分发散
+#define PITCH_P ROLL_P // 横滚和俯仰相同
+#define PITCH_I ROLL_I
+#define PITCH_D ROLL_D
+#define PITCH_I_LIM ROLL_I_LIM
+#define YAW_P 3 // 偏航响应稍慢
+
+// ============== 限制值 ==============
+#define PITCHRATE_MAX radians(360) // 高转速限制（1000°/s）
+#define ROLLRATE_MAX radians(360)
+#define YAWRATE_MAX radians(300) // 偏航转速稍低
+#define TILT_MAX radians(30) // 最大倾斜角30°
+#define ALTHOLD_HOVER_THRUST 0.5f   // 定高悬停基础推力（stub，待气压计实现后替换）
+#define ARM_THROTTLE_LIMIT   0.05f  // 解锁油门上限（归一化后 0~1），5%，超过此值禁止解锁
+#define RATES_D_LPF_ALPHA 0.2 // cutoff frequency ~ 40 Hz
+
+float motThrMin = 0.10f;  // 推力下限（摇杆最低位的输出），可通过参数 MOT_THR_MIN 调节
+float motThrMax = 0.9f;   // 推力上限（摇杆最高位的输出），可通过参数 MOT_THR_MAX 调节；保留 10% 余量供姿态修正
+
+const int RAW = 0, ACRO = 1, STAB = 2, ALTHOLD = 3, AUTO = 4; // flight modes
+int mode = STAB;
+bool armed = false;
+int flightModes[] = {STAB, STAB, STAB}; // RC模式拨杆三挡对应的飞行模式，可通过参数 CTL_FLT_MODE_0/1/2 配置
+
+#if WEB_RC_ENABLED
+extern uint16_t webRCButtons;
+#endif
+
+PID rollRatePID(ROLLRATE_P, ROLLRATE_I, ROLLRATE_D, ROLLRATE_I_LIM, RATES_D_LPF_ALPHA);
+PID pitchRatePID(PITCHRATE_P, PITCHRATE_I, PITCHRATE_D, PITCHRATE_I_LIM, RATES_D_LPF_ALPHA);
+PID yawRatePID(YAWRATE_P, YAWRATE_I, YAWRATE_D);
+PID rollPID(ROLL_P, ROLL_I, ROLL_D, ROLL_I_LIM);
+PID pitchPID(PITCH_P, PITCH_I, PITCH_D, PITCH_I_LIM);
+PID yawPID(YAW_P, 0, 0);
+Vector maxRate(ROLLRATE_MAX, PITCHRATE_MAX, YAWRATE_MAX);
+float tiltMax = TILT_MAX;
+
+Quaternion attitudeTarget;
+Vector ratesTarget;
+Vector ratesExtra; // feedforward rates
+Vector torqueTarget;
+float thrustTarget;
+
+// ============== 软件配平参数 ==============
+// 用于补偿机械不对称（重心偏移、电机/桨叶推力差异、IMU 安装偏斜等）引起的固定方向漂移。
+// 单位：弧度（rad）。
+//
+// 调整方法（串口/Web 控制台，无需重新烧录）：
+//   命令格式：p <参数名> <值>
+//   每次建议步长 0.005 rad（约 0.3°），逐步收敛至松杆不漂为止。
+//   参数自动存储到 Flash，断电后继续生效。
+//
+// 漂移方向与参数对照（松杆后观察）：
+//   飞机向左漂 → p CTL_TRIM_ROLL  +0.01  （正值，命令右倾以产生向右分力抵消左漂）
+//   飞机向右漂 → p CTL_TRIM_ROLL  -0.01  （负值，命令左倾以产生向左分力抵消右漂）
+//   飞机向前漂 → p CTL_TRIM_PITCH -0.01  （负值，命令抬头以产生向后分力抵消前漂）
+//   飞机向后漂 → p CTL_TRIM_PITCH +0.01  （正值，命令低头以产生向前分力抵消后漂）
+//
+// 注意：电量变化、负载改变后配平值可能略有偏移，需偶尔重调。
+float trimRoll  = 0.0f; // 横滚配平角（rad），参数名：CTL_TRIM_ROLL
+float trimPitch = 0.0f; // 俯仰配平角（rad），参数名：CTL_TRIM_PITCH
+
+extern const int MOTOR_REAR_LEFT, MOTOR_REAR_RIGHT, MOTOR_FRONT_RIGHT, MOTOR_FRONT_LEFT;
+extern float motors[4];
+extern float controlRoll, controlPitch, controlThrottle, controlYaw, controlMode;
+extern float batteryVoltage;  // battery.ino
+
+void control() {
+	interpretControls();
+#if WEB_RC_ENABLED
+	interpretWebRC();
+#endif
+	failsafe();
+	controlAttitude();
+	controlRates();
+	controlTorque();
+}
+
+void interpretControls() {
+	if (controlMode < 0.25) mode = flightModes[0];
+	else if (controlMode <= 0.75) mode = flightModes[1];
+	else if (controlMode > 0.75) mode = flightModes[2];
+
+	if (mode == AUTO) return; // pilot is not effective in AUTO mode
+
+#if WEB_RC_ENABLED
+	if (!isUsingWebRC()) { // SBUS手势解锁仅当WebRC未活跃时生效
+#endif
+	extern bool imuOK;
+	static bool armWarnNotified = false;  // 防刷屏：低电/IMU故障禁止解锁提示
+	if (controlThrottle < 0.05 && controlYaw > 0.95) { // arm gesture
+		if (!imuOK) {
+			// IMU 故障：禁止解锁
+			if (!armWarnNotified) {
+				print("IMU故障，禁止解锁！\n");
+#if WEB_RC_ENABLED
+				setWebRCWarn("IMU故障 禁止解锁");
+#endif
+				armWarnNotified = true;
+			}
+		} else if (batteryVoltage > VBAT_ABSENT_THRESHOLD && batteryVoltage < VBAT_WARN_THRESHOLD) {
+			// L1 及以下：禁止解锁，状态变化时提示
+			if (!armWarnNotified) {
+				print("电量低(%.2fV)，禁止解锁\n", batteryVoltage);
+#if WEB_RC_ENABLED
+				char warnBuf[64];
+				snprintf(warnBuf, sizeof(warnBuf), "电量低(%.2fV) 禁止解锁", batteryVoltage);
+				setWebRCWarn(warnBuf);
+#endif
+				armWarnNotified = true;
+			}
+		} else {
+			armed = true;
+			armWarnNotified = false; // 解锁成功后重置
+		}
+	}
+	if (controlThrottle < 0.05 && controlYaw < -0.95) armed = false; // disarm gesture
+#if WEB_RC_ENABLED
+	}
+#endif
+
+	if (abs(controlYaw) < 0.1) controlYaw = 0; // yaw dead zone
+
+	if (controlThrottle < 0.05f) {
+		thrustTarget = 0.0f;   // 底部死区 → 怠速，PID 不运行
+	} else {
+		thrustTarget = mapf(controlThrottle, 0.05f, 1.0f, motThrMin, motThrMax);
+	}
+
+	if (mode == STAB) {
+		float yawTarget = attitudeTarget.getYaw();
+		if (!armed || invalid(yawTarget) || controlYaw != 0) yawTarget = attitude.getYaw(); // reset yaw target
+		// trimRoll/trimPitch 叠加到摇杆指令上，补偿机械不对称引起的固定漂移
+		// 调整方式见变量声明处注释，或通过 CLI: set CTL_TRIM_ROLL / CTL_TRIM_PITCH
+		attitudeTarget = Quaternion::fromEuler(Vector(controlRoll * tiltMax + trimRoll, controlPitch * tiltMax + trimPitch, yawTarget));
+		ratesExtra = Vector(0, 0, -controlYaw * maxRate.z); // positive yaw stick means clockwise rotation in FLU
+	}
+
+	if (mode == ACRO) {
+		attitudeTarget.invalidate(); // skip attitude control
+		ratesTarget.x = controlRoll * maxRate.x;
+		ratesTarget.y = controlPitch * maxRate.y;
+		ratesTarget.z = -controlYaw * maxRate.z; // positive yaw stick means clockwise rotation in FLU
+	}
+
+	if (mode == RAW) { // direct torque control
+		attitudeTarget.invalidate(); // skip attitude control
+		ratesTarget.invalidate(); // skip rate control
+		torqueTarget = Vector(controlRoll, controlPitch, -controlYaw) * 0.1;
+	}
+}
+
+void controlAttitude() {
+	if (!armed || attitudeTarget.invalid() || thrustTarget < motThrMin) return; // skip attitude control
+
+	const Vector up(0, 0, 1);
+	Vector upActual = Quaternion::rotateVector(up, attitude);
+	Vector upTarget = Quaternion::rotateVector(up, attitudeTarget);
+
+	Vector error = Vector::rotationVectorBetween(upTarget, upActual);
+
+	ratesTarget.x = rollPID.update(error.x) + ratesExtra.x;
+	ratesTarget.y = pitchPID.update(error.y) + ratesExtra.y;
+
+	float yawError = wrapAngle(attitudeTarget.getYaw() - attitude.getYaw());
+	ratesTarget.z = yawPID.update(yawError) + ratesExtra.z;
+}
+
+
+void controlRates() {
+	if (!armed || ratesTarget.invalid() || thrustTarget < motThrMin) return; // skip rates control
+
+	Vector error = ratesTarget - rates;
+
+	// Calculate desired torque, where 0 - no torque, 1 - maximum possible torque
+	torqueTarget.x = rollRatePID.update(error.x);
+	torqueTarget.y = pitchRatePID.update(error.y);
+	torqueTarget.z = yawRatePID.update(error.z);
+}
+
+void controlTorque() {
+	if (!torqueTarget.valid()) return; // skip torque control
+
+	if (!armed) {
+		memset(motors, 0, sizeof(motors)); // stop motors if disarmed
+		return;
+	}
+
+	if (thrustTarget < motThrMin) {
+		for (int i = 0; i < 4; i++) motors[i] = motThrMin; // idle thrust
+		return;
+	}
+
+	motors[MOTOR_FRONT_LEFT] = thrustTarget + torqueTarget.x - torqueTarget.y + torqueTarget.z;
+	motors[MOTOR_FRONT_RIGHT] = thrustTarget - torqueTarget.x - torqueTarget.y - torqueTarget.z;
+	motors[MOTOR_REAR_LEFT] = thrustTarget + torqueTarget.x + torqueTarget.y - torqueTarget.z;
+	motors[MOTOR_REAR_RIGHT] = thrustTarget - torqueTarget.x + torqueTarget.y + torqueTarget.z;
+
+	desaturate(motors[MOTOR_FRONT_LEFT], motors[MOTOR_FRONT_RIGHT], motors[MOTOR_REAR_LEFT], motors[MOTOR_REAR_RIGHT]);
+
+	motors[0] = constrain(motors[0], 0, 1);
+	motors[1] = constrain(motors[1], 0, 1);
+	motors[2] = constrain(motors[2], 0, 1);
+	motors[3] = constrain(motors[3], 0, 1);
+}
+
+void desaturate(float& a, float& b, float& c, float& d) {
+	// avg ≈ thrustTarget（力矩分量之和为零），保持 avg 不变，等比缩减力矩偏差
+	float avg = (a + b + c + d) * 0.25f;
+	float maxVal = max(max(a, b), max(c, d));
+	float minVal = min(min(a, b), min(c, d));
+
+	float scale = 1.0f;
+	if (maxVal > 1.0f && maxVal > avg) {
+		scale = min(scale, (1.0f - avg) / (maxVal - avg));
+	}
+	if (minVal < 0.0f && avg > minVal) {
+		scale = min(scale, avg / (avg - minVal));
+	}
+
+	if (scale < 1.0f) {
+		a = avg + (a - avg) * scale;
+		b = avg + (b - avg) * scale;
+		c = avg + (c - avg) * scale;
+		d = avg + (d - avg) * scale;
+	}
+}
+
+const char* getModeName() {
+	switch (mode) {
+		case RAW:     return "RAW";
+		case ACRO:    return "ACRO";
+		case STAB:    return "STAB";
+		case ALTHOLD: return "ALTHOLD";
+		case AUTO:    return "AUTO";
+		default:      return "UNKNOWN";
+	}
+}
+
+#if WEB_RC_ENABLED
+// Web遥控器按钮处理（仅负责ARM/DISARM和模式切换）
+void interpretWebRC() {
+	if (!isUsingWebRC()) return;
+
+	// 处理解锁/上锁按钮（上升沿检测，避免每个控制周期重复触发）
+	static uint16_t lastWebRCButtons = 0;
+	uint16_t risingEdge = webRCButtons & ~lastWebRCButtons;
+	lastWebRCButtons = webRCButtons;
+
+	// 处理解锁/上锁状态变化日志
+	static bool lastArmedState = false;
+	if (armed != lastArmedState) {
+		print(armed ? "Web RC: 已解锁\n" : "Web RC: 已上锁\n");
+		lastArmedState = armed;
+	}
+
+	// 按鈕。0：解锁（上升沿）
+	if (risingEdge & 0x0001) {
+		extern bool imuOK;
+		extern char webRCWarnMsg[];
+		if (!imuOK) {
+			setWebRCWarn("IMU故障 禁止解锁");
+		} else if (batteryVoltage > VBAT_ABSENT_THRESHOLD && batteryVoltage < VBAT_WARN_THRESHOLD) {
+			// 低电量：禁止解锁（与 SBUS 路径 interpretControls() 对齐）
+			char warnBuf[64];
+			snprintf(warnBuf, sizeof(warnBuf), "电量低(%.2fV) 禁止解锁", batteryVoltage);
+			setWebRCWarn(warnBuf);
+		} else if (controlThrottle > ARM_THROTTLE_LIMIT) {
+			setWebRCWarn("油门过高，无法解锁");
+		} else {
+			armed = true;
+			webRCWarnMsg[0] = '\0'; // 解锁成功，清除上次遗留的警告
+		}
+	}
+
+	// 按钮1：上锁（上升沿）
+	if (risingEdge & 0x0002) {
+		armed = false;
+	}
+
+	// 按钮2：急停（上升沿）
+	if (risingEdge & 0x0004) {
+		armed = false;
+		thrustTarget = 0.0f;
+	}
+
+	// 按钮6：STAB模式（上升沿）
+	if (risingEdge & 0x0040) {
+		mode = STAB;
+	}
+
+	// 按钮7：ACRO模式（上升沿）
+	if (risingEdge & 0x0080) {
+		mode = ACRO;
+	}
+
+	// 按鈕。8：ALTHOLD定高模式（上升沿）- 暂未实现，跳过定高切到STAB，避免前端模式循环卡死
+	if (risingEdge & 0x0100) {
+		mode = STAB;
+		setWebRCWarn("定高模式暂不支持，已切换为自稳");
+	}
+
+	// 模式切换日志
+	static int lastMode = STAB;
+	if (mode != lastMode) {
+		print("Web RC: 模式切换到 %s\n", getModeName());
+		lastMode = mode;
+	}
+}
+#endif

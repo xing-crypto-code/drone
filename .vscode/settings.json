@@ -1,0 +1,28 @@
+{
+  // ================================================================
+  // 本文件用于「阅读 CF-Drone 飞控源码」的编辑器配置
+  // ================================================================
+
+  // ---------- 1. 让 .ino 文件按 C++ 解析 ----------
+  // Arduino 的 .ino 本质就是 C++，只是扩展名不同。
+  // 不做这个关联，VS Code 不会给 .ino 文件语法高亮、Ctrl+点击跳转和智能提示。
+  "files.associations": {
+    "*.ino": "cpp",
+    "*.ino.h": "cpp"
+  },
+
+  // ---------- 2. C/C++ 智能提示基础设置 ----------
+  "C_Cpp.default.cppStandard": "c++17",
+  "C_Cpp.default.cStandard": "c17",
+  // 本机是 Windows + GCC 工具链（Arduino-ESP32 用的就是 GCC/xtensa 编译器）
+  "C_Cpp.default.intelliSenseMode": "windows-gcc-x64",
+
+  // ---------- 3. 搜索时排除无关的大文件 ----------
+  // drone.bin 是 4MB 二进制固件、drone.strings.txt 是提取出的字符串，
+  // 搜索代码时把它们排除掉，免得干扰结果
+  // （注意：只排除搜索，文件仍在资源管理器里可见，不会被藏起来）
+  "search.exclude": {
+    "**/drone.bin": true,
+    "**/drone.strings.txt": true
+  }
+}
