@@ -20,7 +20,7 @@
     </td>
     <td width="50%">
       <!-- koleiwa视频入口 ~~-->
-      <a href="images/flight_demo.mp4">
+      <a href="images/clip_to_show.mp4">
         <img src="images/MVIMG_20260901_182406.jpg" width="100%">
       </a>
     </td>
