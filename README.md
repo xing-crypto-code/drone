@@ -1,13 +1,23 @@
-# CF-Drone ESP32 无人机飞控
+# 🚁 CF-Drone ESP32 无人机飞控
 
-**基于 ESP32 的开源四旋翼飞控固件 —— 支持手机网页遥控，无需遥控器也能飞。**
+> 基于 ESP32 的开源四旋翼飞控固件 —— 支持手机网页遥控、CRSF/ELRS、SBUS、MAVLink 与 PID 姿态控制。
 
-本项目是一套运行在 ESP32 上的四旋翼飞行控制器固件，使用 Arduino 框架开发。
-它把姿态解算、串级 PID 控制、电机混控、失效保护、网页遥控和 MAVLink 遥测
-全部塞进一颗几块钱的 ESP32 里，配合一块简单的四合一 MOS 板就能起飞。
+[![Platform](https://img.shields.io/badge/Platform-ESP32-blue)](https://www.espressif.com/)
+[![Framework](https://img.shields.io/badge/Framework-Arduino-blue)](https://www.arduino.cc/)
+[![Language](https://img.shields.io/badge/Language-C%2B%2B-orange)](https://isocpp.org/)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-一大特点是**自带网页遥控器**：飞控自己开 WiFi 热点，手机连上后用浏览器打开即可操纵，
-不用另外买遥控器和接收机（当然也支持 CRSF/ELRS 和 SBUS 接收机）。
+**语言 / Language：** 中文文档 · [English Documentation](README_EN.md)
+
+---
+
+## 📖 项目简介
+
+CF-Drone 是一套运行于 ESP32 上的开源四旋翼飞控固件，采用 Arduino 框架开发。
+
+它集成了姿态解算、串级 PID 控制、电机混控、失效保护、网页遥控和 MAVLink 遥测等功能。
+
+其中一个特点是**自带网页遥控器**：飞控开启 WiFi 热点后，手机连接即可通过浏览器进行控制。
 
 ---
 ## 🔧📷 制作过程
