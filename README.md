@@ -17,11 +17,11 @@
 
 <p align="center">
   <img src="images/IMG_20260901_225841.jpg" width="45%">
-  <img src="images/IMG_20260904_165048.jpg" width="45%">
+  <img src="images/MVIMG_20260901_182406.jpg" width="45%">
 </p>
 
 <p align="center">
-  <img src="images/MVIMG_20260901_182406.jpg" width="45%">
+  <img src="images/IMG_20260904_165048.jpg" width="45%">
   <img src="images/MVIMG_20260902_212145.jpg" width="45%">
 </p>
 
