@@ -11,19 +11,30 @@
 
 ---
 
----
-
 ## 📷 项目过程
 
-<p align="center">
-  <img src="images/IMG_20260901_225841.jpg" width="45%">
-  <img src="images/MVIMG_20260901_182406.jpg" width="45%">
-</p>
+<table>
+  <tr>
+    <td width="50%">
+      <img src="images/IMG_20260901_225841.jpg" width="100%">
+    </td>
+    <td width="50%">
+      <!-- koleiwa视频入口 ~~-->
+      <a href="images/flight_demo.mp4">
+        <img src="images/MVIMG_20260901_182406.jpg" width="100%">
+      </a>
+    </td>
+  </tr>
 
-<p align="center">
-  <img src="images/IMG_20260904_165048.jpg" width="45%">
-  <img src="images/MVIMG_20260902_212145.jpg" width="45%">
-</p>
+  <tr>
+    <td width="50%">
+      <img src="images/IMG_20260904_165048.jpg" width="100%">
+    </td>
+    <td width="50%">
+      <img src="images/MVIMG_20260902_212145.jpg" width="100%">
+    </td>
+  </tr>
+</table>
 
 ## ✨ 功能特性
 
