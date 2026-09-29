@@ -10,30 +10,22 @@
 不用另外买遥控器和接收机（当然也支持 CRSF/ELRS 和 SBUS 接收机）。
 
 ---
-
-## 📷 项目过程
-
 <table>
   <tr>
-    <td width="50%" align="center">
+    <td>
       <img src="images/IMG_20260901_225841.jpg" width="100%">
     </td>
-
-    <td width="50%" align="center">
+    <td>
       <a href="images/clip_to_show.mp4">
         <img src="images/MVIMG_20260901_182406.jpg" width="100%">
       </a>
-      <br>
-      <b>▶ 点击查看飞行演示视频</b>
     </td>
   </tr>
-
   <tr>
-    <td width="50%" align="center">
+    <td>
       <img src="images/IMG_20260904_165048.jpg" width="100%">
     </td>
-
-    <td width="50%" align="center">
+    <td>
       <img src="images/MVIMG_20260902_212145.jpg" width="100%">
     </td>
   </tr>
