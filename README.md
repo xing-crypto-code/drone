@@ -15,22 +15,25 @@
 
 <table>
   <tr>
-    <td width="50%">
+    <td width="50%" align="center">
       <img src="images/IMG_20260901_225841.jpg" width="100%">
     </td>
-    <td width="50%">
-      <!-- koleiwa视频入口 ~~-->
+
+    <td width="50%" align="center">
       <a href="images/clip_to_show.mp4">
         <img src="images/MVIMG_20260901_182406.jpg" width="100%">
       </a>
+      <br>
+      <b>▶ 点击查看飞行演示视频</b>
     </td>
   </tr>
 
   <tr>
-    <td width="50%">
+    <td width="50%" align="center">
       <img src="images/IMG_20260904_165048.jpg" width="100%">
     </td>
-    <td width="50%">
+
+    <td width="50%" align="center">
       <img src="images/MVIMG_20260902_212145.jpg" width="100%">
     </td>
   </tr>
